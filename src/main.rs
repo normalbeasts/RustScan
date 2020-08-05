@@ -13,11 +13,20 @@ use colorful::Colorful;
 use futures::executor::block_on;
 use rlimit::Resource;
 use rlimit::{getrlimit, setrlimit};
+use serde_derive::Deserialize;
 use std::collections::HashMap;
+use std::net::ToSocketAddrs;
 use std::process::Command;
 use std::str::FromStr;
-use std::{net::IpAddr, net::ToSocketAddrs, time::Duration};
+use std::{
+    fs::File,
+    io::{Read, Write},
+    net::IpAddr,
+    path::PathBuf,
+    time::Duration,
+};
 use structopt::{clap::arg_enum, StructOpt};
+use ureq;
 
 extern crate colorful;
 extern crate dirs;
@@ -98,6 +107,10 @@ struct Opts {
     #[structopt(short, long)]
     accessible: bool,
 
+    ///Config file usage
+    #[structopt(short, long)]
+    config: bool,
+
     /// The batch size for port scanning, it increases or slows the speed of
     /// scanning. Depends on the open file limit of your OS.  If you do 65535
     /// it will do every port at the same time. Although, your OS may not
@@ -128,6 +141,11 @@ struct Opts {
     command: Vec<String>,
 }
 
+#[derive(Deserialize)]
+struct ConfigFile {
+    ip: IpAddr,
+}
+
 #[cfg(not(tarpaulin_include))]
 /// Faster Nmap scanning with Rust
 /// If you're looking for the actual scanning, check out the module Scanner
@@ -150,6 +168,12 @@ fn main() {
         print_opening();
     }
 
+    /*
+    TODO when releasing the new config file feature
+    turn this on.
+    if opts.config {
+        let config = get_config_file();
+    }*/
     let ips: Vec<IpAddr> = parse_ips(&opts);
 
     if ips.is_empty() {
@@ -246,21 +270,65 @@ Faster Nmap scanning with Rust."#;
  --------------------------------------"#;
     println!("{}", info.gradient(Color::Yellow).bold());
     funny_opening!();
+    // println!("{}", loaded_config_file);
+}
 
+fn get_config_file() {
+    let result_get_location = get_location_config();
+    let location = match result_get_location {
+        Ok(path) => path,
+        Err(_) => panic!("Your system does not have appdirs."),
+    };
+    info!("The location of config is {:?}", location);
+
+    detail!(format!("The config file is at {:?}", location));
+
+    load_and_parse_config_file(location);
+}
+
+fn get_location_config() -> Result<std::path::PathBuf, &'static str> {
+    info!("Getting location of config file");
     let config_path = match dirs::config_dir() {
         Some(mut path) => {
             path.push("rustscan");
             path.push("config.toml");
-            path
+            Ok(path)
         }
-        None => panic!("Couldn't find config dir."),
+        None => Err("Your system does not have APPDIRS"),
     };
-
-    detail!(format!(
-        "{} {:?}",
-        "The config file is expected to be at", config_path
-    ));
+    config_path
 }
+
+fn load_and_parse_config_file(config_path: PathBuf) -> ConfigFile {
+    // Gets the file and returns the string of TOML
+    // TODO quiet mode
+
+    let mut file = File::open(&config_path);
+    let mut file: File = match file {
+        Ok(result) => result,
+        Err(_) => download_place_config_file(config_path),
+    };
+    let mut contents = String::new();
+    file.read_to_string(&mut contents).unwrap();
+    let config: ConfigFile = toml::from_str(&contents).unwrap();
+
+    config
+}
+// Downloads config file
+// Places into Appdirs
+
+fn download_place_config_file(config_location: PathBuf) -> std::fs::File {
+    info!("Placing config file");
+    let body = ureq::get("https://raw.githubusercontent.com/RustScan/RustScan/master/config.toml")
+        .call()
+        .into_string()
+        .unwrap();
+
+    let mut file = File::create(config_location).unwrap();
+    file.write(body.as_bytes()).unwrap();
+    file
+}
+
 #[cfg(not(tarpaulin_include))]
 fn build_nmap_arguments<'a>(
     addr: &'a str,
@@ -375,6 +443,7 @@ mod tests {
             timeout: 1_000,
             ulimit: Some(2_000),
             command: Vec::new(),
+            config: false,
             accessible: false,
             scan_order: ScanOrder::Serial,
         };
@@ -394,6 +463,7 @@ mod tests {
             timeout: 1_000,
             ulimit: Some(2_000),
             command: Vec::new(),
+            config: false,
             accessible: false,
             scan_order: ScanOrder::Serial,
         };
@@ -414,6 +484,7 @@ mod tests {
             timeout: 1_000,
             ulimit: Some(2_000),
             command: Vec::new(),
+            config: false,
             accessible: false,
             scan_order: ScanOrder::Serial,
         };
@@ -433,6 +504,7 @@ mod tests {
             timeout: 1_000,
             ulimit: Some(2_000),
             command: Vec::new(),
+            config: false,
             accessible: false,
             scan_order: ScanOrder::Serial,
         };
@@ -457,6 +529,7 @@ mod tests {
             timeout: 1_000,
             ulimit: None,
             command: Vec::new(),
+            config: false,
             accessible: true,
             scan_order: ScanOrder::Serial,
         };
@@ -479,6 +552,7 @@ mod tests {
             command: Vec::new(),
             accessible: false,
             scan_order: ScanOrder::Serial,
+            config: false,
         };
         let ips = parse_ips(&opts);
 
@@ -498,6 +572,7 @@ mod tests {
             command: Vec::new(),
             accessible: false,
             scan_order: ScanOrder::Serial,
+            config: false,
         };
         let ips = parse_ips(&opts);
 
@@ -517,6 +592,7 @@ mod tests {
             command: Vec::new(),
             accessible: false,
             scan_order: ScanOrder::Serial,
+            config: false,
         };
         let ips = parse_ips(&opts);
 
